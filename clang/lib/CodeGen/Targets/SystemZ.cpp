@@ -540,8 +540,7 @@ class ZOSXPLinkABIInfo : public ABIInfo {
   bool HasVector;
 
 public:
-  ZOSXPLinkABIInfo(CodeGenTypes &CGT, bool HV)
-      : ABIInfo(CGT), HasVector(HV) {}
+  ZOSXPLinkABIInfo(CodeGenTypes &CGT, bool HV) : ABIInfo(CGT), HasVector(HV) {}
 
   bool isPromotableIntegerType(QualType Ty) const;
   bool isCompoundType(QualType Ty) const;
@@ -575,9 +574,9 @@ class ZOSXPLinkTargetCodeGenInfo : public TargetCodeGenInfo {
 public:
   ZOSXPLinkTargetCodeGenInfo(CodeGenTypes &CGT, bool HasVector)
       : TargetCodeGenInfo(std::make_unique<ZOSXPLinkABIInfo>(CGT, HasVector)) {
-          SwiftInfo =
-            std::make_unique<SwiftABIInfo>(CGT, /*SwiftErrorInRegister=*/false);
-      }
+    SwiftInfo =
+        std::make_unique<SwiftABIInfo>(CGT, /*SwiftErrorInRegister=*/false);
+  }
 };
 
 } // namespace
