@@ -736,7 +736,7 @@ ABIArgInfo ZOSXPLinkABIInfo::classifyReturnType(QualType RetTy) const {
       return ABIArgInfo::getDirect();
   }
 
-  // Aggregates with a size of less than 3 GPRs are returned in GRPs 1, 2 and 3.
+  // Aggregates with a size of less than 3 GPRs are returned in GPRs 1, 2 and 3.
   // Other aggregates are passed in memory as an implicit first parameter.
   if (isAggregateTypeForABI(RetTy)) {
     uint64_t AggregateTypeSize = getContext().getTypeSize(RetTy);
@@ -804,13 +804,13 @@ ABIArgInfo ZOSXPLinkABIInfo::classifyArgumentType(QualType Ty,
       uint64_t Bits = getContext().getTypeSize(Ty);
       llvm::Type *CoerceTy;
 
-      // Struct types up to 8 bytes are passed as integer type (which will be
-      // properly aligned in the argument save area doubleword).
       if (Bits <= GPRBits) {
+        // Struct types up to 8 bytes are passed as integer type (which will be
+        // properly aligned in the argument save area doubleword).
         CoerceTy = llvm::IntegerType::get(getVMContext(), RegBits);
-      // Larger types are passed as arrays, with the base type selected
-      // according to the required alignment in the save area.
       } else {
+        // Larger types are passed as arrays, with the base type selected
+        // according to the required alignment in the save area.
         uint64_t NumRegs = llvm::alignTo(Bits, RegBits) / RegBits;
         llvm::Type *RegTy = llvm::IntegerType::get(getVMContext(), RegBits);
         CoerceTy = llvm::ArrayType::get(RegTy, NumRegs);
