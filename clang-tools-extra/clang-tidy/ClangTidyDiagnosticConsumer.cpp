@@ -311,7 +311,12 @@ ClangTidyDiagnosticConsumer::ClangTidyDiagnosticConsumer(
     : Context(Ctx), ExternalDiagEngine(ExternalDiagEngine),
       RemoveIncompatibleErrors(RemoveIncompatibleErrors),
       GetFixesFromNotes(GetFixesFromNotes),
-      EnableNolintBlocks(EnableNolintBlocks) {}
+      EnableNolintBlocks(EnableNolintBlocks) {
+
+  if (Context.getOptions().ExcludeHeaderFilterRegex)
+    ExcludeHeaderFilter = std::make_unique<llvm::Regex>(
+        *Context.getOptions().ExcludeHeaderFilterRegex);
+}
 
 void ClangTidyDiagnosticConsumer::finalizeLastError() {
   if (!Errors.empty()) {
@@ -562,10 +567,10 @@ void ClangTidyDiagnosticConsumer::checkFilters(SourceLocation Location,
   }
 
   StringRef FileName(File->getName());
-  LastErrorRelatesToUserCode = LastErrorRelatesToUserCode ||
-                               Sources.isInMainFile(Location) ||
-                               (getHeaderFilter()->match(FileName) &&
-                                !getExcludeHeaderFilter()->match(FileName));
+  LastErrorRelatesToUserCode =
+      LastErrorRelatesToUserCode || Sources.isInMainFile(Location) ||
+      (getHeaderFilter()->match(FileName) &&
+       (ExcludeHeaderFilter ? !ExcludeHeaderFilter->match(FileName) : true));
 
   unsigned LineNumber = Sources.getExpansionLineNumber(Location);
   LastErrorPassesLineFilter =
@@ -577,13 +582,6 @@ llvm::Regex *ClangTidyDiagnosticConsumer::getHeaderFilter() {
     HeaderFilter =
         std::make_unique<llvm::Regex>(*Context.getOptions().HeaderFilterRegex);
   return HeaderFilter.get();
-}
-
-llvm::Regex *ClangTidyDiagnosticConsumer::getExcludeHeaderFilter() {
-  if (!ExcludeHeaderFilter)
-    ExcludeHeaderFilter = std::make_unique<llvm::Regex>(
-        *Context.getOptions().ExcludeHeaderFilterRegex);
-  return ExcludeHeaderFilter.get();
 }
 
 void ClangTidyDiagnosticConsumer::removeIncompatibleErrors() {

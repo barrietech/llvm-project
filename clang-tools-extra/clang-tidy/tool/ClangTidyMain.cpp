@@ -53,6 +53,7 @@ Configuration files:
   Checks                       - Same as '--checks'. Additionally, the list of
                                  globs can be specified as a list instead of a
                                  string.
+  ExcludeHeaderFilterRegex     - Same as '--exclude-header-filter'.
   ExtraArgs                    - Same as '--extra-args'.
   ExtraArgsBefore              - Same as '--extra-args-before'.
   FormatStyle                  - Same as '--format-style'.
@@ -133,7 +134,7 @@ option in .clang-tidy file, if any.
                                          cl::cat(ClangTidyCategory));
 
 static cl::opt<std::string> ExcludeHeaderFilter("exclude-header-filter",
-                                                cl::desc(R"(
+                                                desc(R"(
 Regular expression matching the names of the
 headers to exclude diagnostics from. Diagnostics
 from the main file of each translation unit are

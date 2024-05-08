@@ -194,7 +194,7 @@ ClangTidyOptions ClangTidyOptions::getDefaults() {
   Options.HeaderFileExtensions = {"", "h", "hh", "hpp", "hxx"};
   Options.ImplementationFileExtensions = {"c", "cc", "cpp", "cxx"};
   Options.HeaderFilterRegex = "";
-  Options.ExcludeHeaderFilterRegex = "";
+  Options.ExcludeHeaderFilterRegex = std::nullopt;
   Options.SystemHeaders = false;
   Options.FormatStyle = "none";
   Options.User = std::nullopt;
