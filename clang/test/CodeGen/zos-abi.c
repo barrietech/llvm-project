@@ -75,35 +75,35 @@ struct complexlike_longdouble pass_complexlike_longdouble(struct complexlike_lon
 
 struct agg_1byte { char a[1]; };
 struct agg_1byte pass_agg_1byte(struct agg_1byte arg) { return arg; }
-// CHECK-LABEL: define inreg [1 x i64] @pass_agg_1byte(i64 inreg %{{.*}})
+// CHECK-LABEL: define inreg i64 @pass_agg_1byte(i64 inreg %{{.*}})
 
 struct agg_2byte { char a[2]; };
 struct agg_2byte pass_agg_2byte(struct agg_2byte arg) { return arg; }
-// CHECK-LABEL: define inreg [1 x i64] @pass_agg_2byte(i64 inreg %{{.*}})
+// CHECK-LABEL: define inreg i64 @pass_agg_2byte(i64 inreg %{{.*}})
 
 struct agg_3byte { char a[3]; };
 struct agg_3byte pass_agg_3byte(struct agg_3byte arg) { return arg; }
-// CHECK-LABEL: define inreg [1 x i64] @pass_agg_3byte(i64 inreg %{{.*}})
+// CHECK-LABEL: define inreg i64 @pass_agg_3byte(i64 inreg %{{.*}})
 
 struct agg_4byte { char a[4]; };
 struct agg_4byte pass_agg_4byte(struct agg_4byte arg) { return arg; }
-// CHECK-LABEL: define inreg [1 x i64] @pass_agg_4byte(i64 inreg %{{.*}})
+// CHECK-LABEL: define inreg i64 @pass_agg_4byte(i64 inreg %{{.*}})
 
 struct agg_5byte { char a[5]; };
 struct agg_5byte pass_agg_5byte(struct agg_5byte arg) { return arg; }
-// CHECK-LABEL: define inreg [1 x i64] @pass_agg_5byte(i64 inreg %{{.*}})
+// CHECK-LABEL: define inreg i64 @pass_agg_5byte(i64 inreg %{{.*}})
 
 struct agg_6byte { char a[6]; };
 struct agg_6byte pass_agg_6byte(struct agg_6byte arg) { return arg; }
-// CHECK-LABEL: define inreg [1 x i64] @pass_agg_6byte(i64 inreg %{{.*}})
+// CHECK-LABEL: define inreg i64 @pass_agg_6byte(i64 inreg %{{.*}})
 
 struct agg_7byte { char a[7]; };
 struct agg_7byte pass_agg_7byte(struct agg_7byte arg) { return arg; }
-// CHECK-LABEL: define inreg [1 x i64] @pass_agg_7byte(i64 inreg %{{.*}})
+// CHECK-LABEL: define inreg i64 @pass_agg_7byte(i64 inreg %{{.*}})
 
 struct agg_8byte { char a[8]; };
 struct agg_8byte pass_agg_8byte(struct agg_8byte arg) { return arg; }
-// CHECK-LABEL: define inreg [1 x i64] @pass_agg_8byte(i64 inreg %{{.*}})
+// CHECK-LABEL: define inreg i64 @pass_agg_8byte(i64 inreg %{{.*}})
 
 struct agg_9byte { char a[9]; };
 struct agg_9byte pass_agg_9byte(struct agg_9byte arg) { return arg; }
@@ -124,14 +124,14 @@ struct agg_25byte pass_agg_25byte(struct agg_25byte arg) { return arg; }
 // Check that a float-like aggregate type is really passed as aggregate
 struct agg_float { float a; };
 struct agg_float pass_agg_float(struct agg_float arg) { return arg; }
-// CHECK-LABEL: define inreg [1 x i64] @pass_agg_float(i64 inreg %{{.*}})
+// CHECK-LABEL: define inreg i64 @pass_agg_float(i64 inreg %{{.*}})
 
 // Verify that the following are *not* float-like aggregate types
 
 struct agg_nofloat2 { float a; int b; };
 struct agg_nofloat2 pass_agg_nofloat2(struct agg_nofloat2 arg) { return arg; }
-// CHECK-LABEL: define inreg [1 x i64] @pass_agg_nofloat2(i64 inreg %{{.*}})
+// CHECK-LABEL: define inreg i64 @pass_agg_nofloat2(i64 inreg %{{.*}})
 
 struct agg_nofloat3 { float a; int : 0; };
 struct agg_nofloat3 pass_agg_nofloat3(struct agg_nofloat3 arg) { return arg; }
-// CHECK-LABEL: define inreg [1 x i64] @pass_agg_nofloat3(i64 inreg %{{.*}})
+// CHECK-LABEL: define inreg i64 @pass_agg_nofloat3(i64 inreg %{{.*}})

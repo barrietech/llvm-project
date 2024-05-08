@@ -694,15 +694,17 @@ bool ZOSXPLinkABIInfo::IsLikeComplexType(QualType Ty) const {
           if (i == 0) {
             elemKind = BT->getKind();
             break;
-          } else if (elemKind == BT->getKind())
+          } else if (elemKind == BT->getKind()) {
             break;
-          else
+          } else {
             return false;
+          }
         default:
           return false;
         }
-      } else
+      } else {
         return false;
+      }
 
       i++;
     }
@@ -748,15 +750,12 @@ ABIArgInfo ZOSXPLinkABIInfo::classifyReturnType(QualType RetTy) const {
       // Types between 16 and 24 bytes are passed as integer types in GPR1, 2
       // and 3.
       llvm::Type *CoerceTy = llvm::IntegerType::get(getVMContext(), GPRBits);
-      CoerceTy = llvm::ArrayType::get(CoerceTy, NumElements);
+      if (NumElements > 1)
+        CoerceTy = llvm::ArrayType::get(CoerceTy, NumElements);
       return ABIArgInfo::getDirectInReg(CoerceTy);
-    } else
-      return getNaturalAlignIndirect(RetTy);
+    }
+    return getNaturalAlignIndirect(RetTy);
   }
-
-  // Treat an enum type as its underlying type.
-  if (const EnumType *EnumTy = RetTy->getAs<EnumType>())
-    RetTy = EnumTy->getDecl()->getIntegerType();
 
   return (isPromotableIntegerType(RetTy) ? ABIArgInfo::getExtend(RetTy)
                                          : ABIArgInfo::getDirect());
@@ -805,13 +804,13 @@ ABIArgInfo ZOSXPLinkABIInfo::classifyArgumentType(QualType Ty,
       uint64_t Bits = getContext().getTypeSize(Ty);
       llvm::Type *CoerceTy;
 
-      // Struct types up to 8 bytes are passed as integer type (which  will be
+      // Struct types up to 8 bytes are passed as integer type (which will be
       // properly aligned in the argument save area doubleword).
-      if (Bits <= GPRBits)
+      if (Bits <= GPRBits) {
         CoerceTy = llvm::IntegerType::get(getVMContext(), RegBits);
       // Larger types are passed as arrays, with the base type selected
       // according to the required alignment in the save area.
-      else {
+      } else {
         uint64_t NumRegs = llvm::alignTo(Bits, RegBits) / RegBits;
         llvm::Type *RegTy = llvm::IntegerType::get(getVMContext(), RegBits);
         CoerceTy = llvm::ArrayType::get(RegTy, NumRegs);
