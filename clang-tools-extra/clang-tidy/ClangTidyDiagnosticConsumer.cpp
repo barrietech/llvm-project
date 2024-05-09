@@ -570,7 +570,7 @@ void ClangTidyDiagnosticConsumer::checkFilters(SourceLocation Location,
   LastErrorRelatesToUserCode =
       LastErrorRelatesToUserCode || Sources.isInMainFile(Location) ||
       (getHeaderFilter()->match(FileName) &&
-       (ExcludeHeaderFilter ? !ExcludeHeaderFilter->match(FileName) : true));
+       !(ExcludeHeaderFilter && ExcludeHeaderFilter->match(FileName)));
 
   unsigned LineNumber = Sources.getExpansionLineNumber(Location);
   LastErrorPassesLineFilter =
