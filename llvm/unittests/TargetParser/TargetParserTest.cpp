@@ -1996,7 +1996,6 @@ TEST(TargetParserTest, AArch64ExtensionFeatures) {
       AArch64::AEK_D128,         AArch64::AEK_LSE128,
       AArch64::AEK_SPECRES2,     AArch64::AEK_RASv2,
       AArch64::AEK_ITE,          AArch64::AEK_GCS,
-      AArch64::AEK_FPMR,         AArch64::AEK_FP8,
       AArch64::AEK_FAMINMAX,     AArch64::AEK_FP8FMA,
       AArch64::AEK_SSVE_FP8FMA,  AArch64::AEK_FP8DOT2,
       AArch64::AEK_SSVE_FP8DOT2, AArch64::AEK_FP8DOT4,
@@ -2078,7 +2077,6 @@ TEST(TargetParserTest, AArch64ExtensionFeatures) {
   EXPECT_TRUE(llvm::is_contained(Features, "+specres2"));
   EXPECT_TRUE(llvm::is_contained(Features, "+ite"));
   EXPECT_TRUE(llvm::is_contained(Features, "+gcs"));
-  EXPECT_TRUE(llvm::is_contained(Features, "+fp8"));
   EXPECT_TRUE(llvm::is_contained(Features, "+faminmax"));
   EXPECT_TRUE(llvm::is_contained(Features, "+fp8fma"));
   EXPECT_TRUE(llvm::is_contained(Features, "+ssve-fp8fma"));
