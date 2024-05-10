@@ -1897,12 +1897,19 @@ public:
   }
 
   template <typename Itr>
-  std::pair<IndirectBranchType, MCInst *>
+  std::tuple<IndirectBranchType, MCInst *, MCInst *>
   analyzePICJumpTable(Itr II, Itr IE, MCPhysReg R1, MCPhysReg R2) const {
     // Analyze PIC-style jump table code template:
     //
     //    lea PIC_JUMP_TABLE(%rip), {%r1|%r2}     <- MemLocInstr
     //    mov ({%r1|%r2}, %index, 4), {%r2|%r1}
+    //    add %r2, %r1
+    //    jmp *%r1
+    //
+    // or a fixed indirect jump template:
+    //
+    //    movslq En(%rip), {%r2|%r1}
+    //    lea PIC_JUMP_TABLE(%rip), {%r1|%r2}     <- MemLocInstr
     //    add %r2, %r1
     //    jmp *%r1
     //
@@ -1947,8 +1954,13 @@ public:
     };
     LLVM_DEBUG(dbgs() << "Checking for PIC jump table\n");
     MCInst *MemLocInstr = nullptr;
-    const MCInst *MovInstr = nullptr;
+    MCInst *MovInstr = nullptr;
+    bool IsFixedBranch = false;
+    // Allow renaming R1/R2 once.
+    bool SwappedRegs = false;
     while (++II != IE) {
+      if (MovInstr && MemLocInstr)
+        break;
       MCInst &Instr = *II;
       const MCInstrDesc &InstrDesc = Info->get(Instr.getOpcode());
       if (!InstrDesc.hasDefOfPhysReg(Instr, R1, *RegInfo) &&
@@ -1956,19 +1968,18 @@ public:
         // Ignore instructions that don't affect R1, R2 registers.
         continue;
       }
-      if (!MovInstr) {
-        // Expect to see MOV instruction.
-        if (!isMOVSX64rm32(Instr)) {
-          LLVM_DEBUG(dbgs() << "MOV instruction expected.\n");
-          break;
-        }
-
+      if (isMOVSX64rm32(Instr)) {
+        // Potential redefinition of MovInstr - bail.
+        if (MovInstr)
+          return std::make_tuple(IndirectBranchType::UNKNOWN, nullptr, nullptr);
         // Check if it's setting %r1 or %r2. In canonical form it sets %r2.
         // If it sets %r1 - rename the registers so we have to only check
         // a single form.
         unsigned MovDestReg = Instr.getOperand(0).getReg();
-        if (MovDestReg != R2)
+        if (!SwappedRegs && MovDestReg != R2) {
           std::swap(R1, R2);
+          SwappedRegs = true;
+        }
         if (MovDestReg != R2) {
           LLVM_DEBUG(dbgs() << "MOV instruction expected to set %r2\n");
           break;
@@ -1978,16 +1989,26 @@ public:
         std::optional<X86MemOperand> MO = evaluateX86MemoryOperand(Instr);
         if (!MO)
           break;
-        if (!isIndexed(*MO, R1))
-          // POSSIBLE_PIC_JUMP_TABLE
+        if (isRIPRel(*MO))
+          IsFixedBranch = true;
+        else if (isIndexed(*MO, R1))
+          ; // POSSIBLE_PIC_JUMP_TABLE
+        else
           break;
         MovInstr = &Instr;
-      } else {
-        if (!InstrDesc.hasDefOfPhysReg(Instr, R1, *RegInfo))
-          continue;
-        if (!isLEA64r(Instr)) {
-          LLVM_DEBUG(dbgs() << "LEA instruction expected\n");
-          break;
+        continue;
+      }
+      if (isLEA64r(Instr)) {
+        // Potential redefinition of MemLocInstr - bail.
+        if (MemLocInstr)
+          return std::make_tuple(IndirectBranchType::UNKNOWN, nullptr, nullptr);
+        // Check if it's setting %r1 or %r2. In canonical form it sets %r1.
+        // If it sets %r2 - rename the registers so we have to only check
+        // a single form.
+        unsigned LeaDestReg = Instr.getOperand(0).getReg();
+        if (!SwappedRegs && LeaDestReg != R1) {
+          std::swap(R1, R2);
+          SwappedRegs = true;
         }
         if (Instr.getOperand(0).getReg() != R1) {
           LLVM_DEBUG(dbgs() << "LEA instruction expected to set %r1\n");
@@ -2001,23 +2022,30 @@ public:
         if (!isRIPRel(*MO))
           break;
         MemLocInstr = &Instr;
-        break;
+        continue;
       }
     }
 
     if (!MemLocInstr)
-      return std::make_pair(IndirectBranchType::UNKNOWN, nullptr);
+      return std::make_tuple(IndirectBranchType::UNKNOWN, nullptr, nullptr);
+
+    LLVM_DEBUG(dbgs() << "checking potential fixed indirect branch\n");
+    if (IsFixedBranch)
+      return std::make_tuple(IndirectBranchType::POSSIBLE_PIC_FIXED_BRANCH,
+                             MemLocInstr, MovInstr);
 
     LLVM_DEBUG(dbgs() << "checking potential PIC jump table\n");
-    return std::make_pair(IndirectBranchType::POSSIBLE_PIC_JUMP_TABLE,
-                          MemLocInstr);
+    return std::make_tuple(IndirectBranchType::POSSIBLE_PIC_JUMP_TABLE,
+                          MemLocInstr, nullptr);
   }
 
-  IndirectBranchType analyzeIndirectBranch(
-      MCInst &Instruction, InstructionIterator Begin, InstructionIterator End,
-      const unsigned PtrSize, MCInst *&MemLocInstrOut, unsigned &BaseRegNumOut,
-      unsigned &IndexRegNumOut, int64_t &DispValueOut,
-      const MCExpr *&DispExprOut, MCInst *&PCRelBaseOut) const override {
+  IndirectBranchType
+  analyzeIndirectBranch(MCInst &Instruction, InstructionIterator Begin,
+                        InstructionIterator End, const unsigned PtrSize,
+                        MCInst *&MemLocInstrOut, unsigned &BaseRegNumOut,
+                        unsigned &IndexRegNumOut, int64_t &DispValueOut,
+                        const MCExpr *&DispExprOut, MCInst *&PCRelBaseOut,
+                        MCInst *&FixedEntryLoadInst) const override {
     // Try to find a (base) memory location from where the address for
     // the indirect branch is loaded. For X86-64 the memory will be specified
     // in the following format:
@@ -2044,6 +2072,7 @@ public:
     IndexRegNumOut = X86::NoRegister;
     DispValueOut = 0;
     DispExprOut = nullptr;
+    FixedEntryLoadInst = nullptr;
 
     std::reverse_iterator<InstructionIterator> II(End);
     std::reverse_iterator<InstructionIterator> IE(Begin);
@@ -2076,7 +2105,8 @@ public:
           unsigned R2 = PrevInstr.getOperand(2).getReg();
           if (R1 == R2)
             return IndirectBranchType::UNKNOWN;
-          std::tie(Type, MemLocInstr) = analyzePICJumpTable(PrevII, IE, R1, R2);
+          std::tie(Type, MemLocInstr, FixedEntryLoadInst) =
+              analyzePICJumpTable(PrevII, IE, R1, R2);
           break;
         }
         return IndirectBranchType::UNKNOWN;
@@ -2119,6 +2149,8 @@ public:
     case IndirectBranchType::POSSIBLE_PIC_JUMP_TABLE:
       if (MO->ScaleImm != 1 || MO->BaseRegNum != RIPRegister)
         return IndirectBranchType::UNKNOWN;
+      break;
+    case IndirectBranchType::POSSIBLE_PIC_FIXED_BRANCH:
       break;
     default:
       if (MO->ScaleImm != PtrSize)
