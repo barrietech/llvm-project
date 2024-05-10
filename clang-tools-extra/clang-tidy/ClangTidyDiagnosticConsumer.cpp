@@ -313,7 +313,8 @@ ClangTidyDiagnosticConsumer::ClangTidyDiagnosticConsumer(
       GetFixesFromNotes(GetFixesFromNotes),
       EnableNolintBlocks(EnableNolintBlocks) {
 
-  if (Context.getOptions().ExcludeHeaderFilterRegex)
+  if (Context.getOptions().ExcludeHeaderFilterRegex &&
+      !Context.getOptions().ExcludeHeaderFilterRegex->empty())
     ExcludeHeaderFilter = std::make_unique<llvm::Regex>(
         *Context.getOptions().ExcludeHeaderFilterRegex);
 }
