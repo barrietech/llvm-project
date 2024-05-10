@@ -1743,6 +1743,9 @@ void BinaryFunction::postProcessJumpTables() {
     }
   }
 
+  // Set of JTs accessed from this function.
+  std::unordered_set<uint64_t> LiveJTs;
+
   // Add TakenBranches from JumpTables.
   //
   // We want to do it after initial processing since we don't know jump tables'
@@ -1750,6 +1753,7 @@ void BinaryFunction::postProcessJumpTables() {
   for (auto &JTSite : JTSites) {
     const uint64_t JTSiteOffset = JTSite.first;
     const uint64_t JTAddress = JTSite.second;
+    LiveJTs.emplace(JTAddress);
     const JumpTable *JT = getJumpTableContainingAddress(JTAddress);
     assert(JT && "cannot find jump table for address");
 
@@ -1784,6 +1788,21 @@ void BinaryFunction::postProcessJumpTables() {
         TakenBranches.emplace_back(Offset, PossibleDestination);
       }
     }
+  }
+
+  // Remove dead jump tables (reference removed as a result of
+  // POSSIBLE_PIC_FIXED_BRANCH optimization).
+  for (auto JTI = JumpTables.begin(), JTE = JumpTables.end(); JTI != JTE;) {
+    const uint64_t Address = JTI->first;
+    JumpTable *JT = JTI->second;
+    bool HasOneParent = JT->Parents.size() == 1;
+    if (LiveJTs.count(Address) == 0 && HasOneParent) {
+      BC.deregisterJumpTable(Address);
+      delete JT;
+      JTI = JumpTables.erase(JTI);
+      continue;
+    }
+    ++JTI;
   }
 }
 
