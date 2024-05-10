@@ -46,10 +46,6 @@ class CallLowering {
 
   virtual void anchor();
 public:
-  struct PointerAuthInfo {
-    Register Discriminator;
-    uint64_t Key;
-  };
   struct BaseArgInfo {
     Type *Ty;
     SmallVector<ISD::ArgFlagsTy, 4> Flags;
@@ -101,6 +97,11 @@ public:
       : ArgInfo(Regs, OrigValue.getType(), OrigIndex, Flags, IsFixed, &OrigValue) {}
 
     ArgInfo() = default;
+  };
+
+  struct PointerAuthInfo {
+    Register Discriminator;
+    uint64_t Key;
   };
 
   struct CallLoweringInfo {
