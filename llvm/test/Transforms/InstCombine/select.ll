@@ -3743,6 +3743,31 @@ define double @sequence_select_with_same_cond_double(double %a, i1 %c1, i1 %c2, 
   ret double %s3
 }
 
+; Confirm the FMF flag is propagated
+define float @sequence_select_with_same_cond_float_and_fmf_flag1(i1 %c1, i1 %c2){
+; CHECK-LABEL: @sequence_select_with_same_cond_float_and_fmf_flag1(
+; CHECK-NEXT:    [[S2_NEW:%.*]] = select fast i1 [[C2:%.*]], float 6.660000e+02, float 4.500000e+01
+; CHECK-NEXT:    [[S3:%.*]] = select fast i1 [[C1:%.*]], float 7.890000e+02, float [[S2_NEW]]
+; CHECK-NEXT:    ret float [[S3]]
+;
+  %s1 = select i1 %c1, float 23.0, float 45.0
+  %s2 = select fast i1 %c2, float 666.0, float %s1 ; has fast flag
+  %s3 = select fast i1 %c1, float 789.0, float %s2
+  ret float %s3
+}
+
+define float @sequence_select_with_same_cond_float_and_fmf_flag2(i1 %c1, i1 %c2){
+; CHECK-LABEL: @sequence_select_with_same_cond_float_and_fmf_flag2(
+; CHECK-NEXT:    [[S2_NEW:%.*]] = select i1 [[C2:%.*]], float 6.660000e+02, float 4.500000e+01
+; CHECK-NEXT:    [[S3:%.*]] = select fast i1 [[C1:%.*]], float 7.890000e+02, float [[S2_NEW]]
+; CHECK-NEXT:    ret float [[S3]]
+;
+  %s1 = select fast i1 %c1, float 23.0, float 45.0
+  %s2 = select i1 %c2, float 666.0, float %s1    ; has no fast flag
+  %s3 = select fast i1 %c1, float 789.0, float %s2
+  ret float %s3
+}
+
 declare void @use32(i32)
 
 define i32 @sequence_select_with_same_cond_extra_use(i1 %c1, i1 %c2){

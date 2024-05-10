@@ -500,8 +500,13 @@ static bool isSelect01(const APInt &C1I, const APInt &C2I) {
   return C1I.isOne() || C1I.isAllOnes() || C2I.isOne() || C2I.isAllOnes();
 }
 
-/// Try to simplify a select instruction when the user of its select user
-/// indicates the condition.
+/// Try to simplify seletion chain with partially identical conditions, eg:
+///   %s1 = select i1 %c1, i32 23, i32 45
+///   %s2 = select i1 %c2, i32 666, i32 %s1
+///   %s3 = select i1 %c1, i32 789, i32 %s2
+/// -->
+///   %s2 = select i1 %c2, i32 666, i32 45
+///   %s3 = select i1 %c1, i32 789, i32 %s2
 static bool simplifySeqSelectWithSameCond(SelectInst &SI,
                                           const SimplifyQuery &SQ,
                                           InstCombiner::BuilderTy &Builder,
@@ -526,6 +531,13 @@ static bool simplifySeqSelectWithSameCond(SelectInst &SI,
           // multi arms, and insert the new Select just before SINext.
           Value *NewSI;
           IC.Builder.SetInsertPoint(SINext);
+          // Propagate FMF flag for float types.
+          IRBuilder<>::FastMathFlagGuard Guard(Builder);
+          Type *Ty = SINext->getOperand(1)->getType();
+          if (!Ty->isIntOrIntVectorTy()) {
+            FastMathFlags FMF = SINext->getFastMathFlags();
+            Builder.setFastMathFlags(FMF);
+          }
           if (OpIndex == 1)
             NewSI = Builder.CreateSelect(
                 SINext->getCondition(), ValSI->getOperand(1),
