@@ -139,6 +139,7 @@ Regular expression matching the names of the
 headers to exclude diagnostics from. Diagnostics
 from the main file of each translation unit are
 always displayed.
+Must be used together with --header-filter.
 Can be used together with -line-filter.
 This option overrides the 'ExcludeHeaderFilterRegex'
 option in .clang-tidy file, if any.
