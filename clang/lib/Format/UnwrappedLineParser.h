@@ -157,7 +157,7 @@ private:
   void parseDoWhile();
   void parseLabel(bool LeftAlignLabel = false);
   void parseCaseLabel();
-  void parseSwitch();
+  void parseSwitch(bool IsExpr);
   void parseNamespace();
   bool parseModuleImport();
   void parseNew();
@@ -315,6 +315,7 @@ private:
   llvm::BitVector DeclarationScopeStack;
 
   const FormatStyle &Style;
+  bool IsCpp;
   const AdditionalKeywords &Keywords;
 
   llvm::Regex CommentPragmasRegex;

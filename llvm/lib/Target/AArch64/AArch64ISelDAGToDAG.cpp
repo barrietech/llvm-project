@@ -258,6 +258,11 @@ public:
     return SelectSVEAddSubImm(N, VT, Imm, Shift);
   }
 
+  template <MVT::SimpleValueType VT, bool Negate>
+  bool SelectSVEAddSubSSatImm(SDValue N, SDValue &Imm, SDValue &Shift) {
+    return SelectSVEAddSubSSatImm(N, VT, Imm, Shift, Negate);
+  }
+
   template <MVT::SimpleValueType VT>
   bool SelectSVECpyDupImm(SDValue N, SDValue &Imm, SDValue &Shift) {
     return SelectSVECpyDupImm(N, VT, Imm, Shift);
@@ -465,7 +470,7 @@ private:
                          SDValue &Offset, SDValue &SignExtend,
                          SDValue &DoShift);
   bool isWorthFoldingALU(SDValue V, bool LSL = false) const;
-  bool isWorthFoldingAddr(SDValue V) const;
+  bool isWorthFoldingAddr(SDValue V, unsigned Size) const;
   bool SelectExtendedSHL(SDValue N, unsigned Size, bool WantExtend,
                          SDValue &Offset, SDValue &SignExtend);
 
@@ -487,6 +492,8 @@ private:
   bool SelectCMP_SWAP(SDNode *N);
 
   bool SelectSVEAddSubImm(SDValue N, MVT VT, SDValue &Imm, SDValue &Shift);
+  bool SelectSVEAddSubSSatImm(SDValue N, MVT VT, SDValue &Imm, SDValue &Shift,
+                              bool Negate);
   bool SelectSVECpyDupImm(SDValue N, MVT VT, SDValue &Imm, SDValue &Shift);
   bool SelectSVELogicalImm(SDValue N, MVT VT, SDValue &Imm, bool Invert);
 
@@ -677,17 +684,22 @@ static bool isWorthFoldingSHL(SDValue V) {
 
 /// Determine whether it is worth to fold V into an extended register addressing
 /// mode.
-bool AArch64DAGToDAGISel::isWorthFoldingAddr(SDValue V) const {
+bool AArch64DAGToDAGISel::isWorthFoldingAddr(SDValue V, unsigned Size) const {
   // Trivial if we are optimizing for code size or if there is only
   // one use of the value.
   if (CurDAG->shouldOptForSize() || V.hasOneUse())
     return true;
-  // If a subtarget has a fastpath LSL we can fold a logical shift into
-  // the addressing mode and save a cycle.
-  if (Subtarget->hasAddrLSLFast() && V.getOpcode() == ISD::SHL &&
-      isWorthFoldingSHL(V))
+
+  // If a subtarget has a slow shift, folding a shift into multiple loads
+  // costs additional micro-ops.
+  if (Subtarget->hasAddrLSLSlow14() && (Size == 2 || Size == 16))
+    return false;
+
+  // Check whether we're going to emit the address arithmetic anyway because
+  // it's used by a non-address operation.
+  if (V.getOpcode() == ISD::SHL && isWorthFoldingSHL(V))
     return true;
-  if (Subtarget->hasAddrLSLFast() && V.getOpcode() == ISD::ADD) {
+  if (V.getOpcode() == ISD::ADD) {
     const SDValue LHS = V.getOperand(0);
     const SDValue RHS = V.getOperand(1);
     if (LHS.getOpcode() == ISD::SHL && isWorthFoldingSHL(LHS))
@@ -1206,7 +1218,7 @@ bool AArch64DAGToDAGISel::SelectExtendedSHL(SDValue N, unsigned Size,
   if (ShiftVal != 0 && ShiftVal != LegalShiftVal)
     return false;
 
-  return isWorthFoldingAddr(N);
+  return isWorthFoldingAddr(N, Size);
 }
 
 bool AArch64DAGToDAGISel::SelectAddrModeWRO(SDValue N, unsigned Size,
@@ -1234,7 +1246,7 @@ bool AArch64DAGToDAGISel::SelectAddrModeWRO(SDValue N, unsigned Size,
   }
 
   // Remember if it is worth folding N when it produces extended register.
-  bool IsExtendedRegisterWorthFolding = isWorthFoldingAddr(N);
+  bool IsExtendedRegisterWorthFolding = isWorthFoldingAddr(N, Size);
 
   // Try to match a shifted extend on the RHS.
   if (IsExtendedRegisterWorthFolding && RHS.getOpcode() == ISD::SHL &&
@@ -1264,7 +1276,7 @@ bool AArch64DAGToDAGISel::SelectAddrModeWRO(SDValue N, unsigned Size,
     Offset = narrowIfNeeded(CurDAG, LHS.getOperand(0));
     SignExtend = CurDAG->getTargetConstant(Ext == AArch64_AM::SXTW, dl,
                                            MVT::i32);
-    if (isWorthFoldingAddr(LHS))
+    if (isWorthFoldingAddr(LHS, Size))
       return true;
   }
 
@@ -1276,7 +1288,7 @@ bool AArch64DAGToDAGISel::SelectAddrModeWRO(SDValue N, unsigned Size,
     Offset = narrowIfNeeded(CurDAG, RHS.getOperand(0));
     SignExtend = CurDAG->getTargetConstant(Ext == AArch64_AM::SXTW, dl,
                                            MVT::i32);
-    if (isWorthFoldingAddr(RHS))
+    if (isWorthFoldingAddr(RHS, Size))
       return true;
   }
 
@@ -1346,7 +1358,7 @@ bool AArch64DAGToDAGISel::SelectAddrModeXRO(SDValue N, unsigned Size,
   }
 
   // Remember if it is worth folding N when it produces extended register.
-  bool IsExtendedRegisterWorthFolding = isWorthFoldingAddr(N);
+  bool IsExtendedRegisterWorthFolding = isWorthFoldingAddr(N, Size);
 
   // Try to match a shifted extend on the RHS.
   if (IsExtendedRegisterWorthFolding && RHS.getOpcode() == ISD::SHL &&
@@ -4089,6 +4101,56 @@ bool AArch64DAGToDAGISel::SelectSVEAddSubImm(SDValue N, MVT VT, SDValue &Imm,
       return true;
     }
     // Support 16bit unsigned immediates that are a multiple of 256.
+    if (Val <= 65280 && Val % 256 == 0) {
+      Shift = CurDAG->getTargetConstant(8, DL, MVT::i32);
+      Imm = CurDAG->getTargetConstant(Val >> 8, DL, MVT::i32);
+      return true;
+    }
+    break;
+  default:
+    break;
+  }
+
+  return false;
+}
+
+bool AArch64DAGToDAGISel::SelectSVEAddSubSSatImm(SDValue N, MVT VT,
+                                                 SDValue &Imm, SDValue &Shift,
+                                                 bool Negate) {
+  if (!isa<ConstantSDNode>(N))
+    return false;
+
+  SDLoc DL(N);
+  int64_t Val = cast<ConstantSDNode>(N)
+                    ->getAPIntValue()
+                    .trunc(VT.getFixedSizeInBits())
+                    .getSExtValue();
+
+  if (Negate)
+    Val = -Val;
+
+  // Signed saturating instructions treat their immediate operand as unsigned,
+  // whereas the related intrinsics define their operands to be signed. This
+  // means we can only use the immediate form when the operand is non-negative.
+  if (Val < 0)
+    return false;
+
+  switch (VT.SimpleTy) {
+  case MVT::i8:
+    // All positive immediates are supported.
+    Shift = CurDAG->getTargetConstant(0, DL, MVT::i32);
+    Imm = CurDAG->getTargetConstant(Val, DL, MVT::i32);
+    return true;
+  case MVT::i16:
+  case MVT::i32:
+  case MVT::i64:
+    // Support 8bit positive immediates.
+    if (Val <= 255) {
+      Shift = CurDAG->getTargetConstant(0, DL, MVT::i32);
+      Imm = CurDAG->getTargetConstant(Val, DL, MVT::i32);
+      return true;
+    }
+    // Support 16bit positive immediates that are a multiple of 256.
     if (Val <= 65280 && Val % 256 == 0) {
       Shift = CurDAG->getTargetConstant(8, DL, MVT::i32);
       Imm = CurDAG->getTargetConstant(Val >> 8, DL, MVT::i32);

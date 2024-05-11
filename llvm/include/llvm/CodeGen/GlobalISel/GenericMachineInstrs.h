@@ -286,6 +286,26 @@ public:
   }
 };
 
+/// Represents a G_BUILD_VECTOR_TRUNC.
+class GBuildVectorTrunc : public GMergeLikeInstr {
+public:
+  static bool classof(const MachineInstr *MI) {
+    return MI->getOpcode() == TargetOpcode::G_BUILD_VECTOR_TRUNC;
+  }
+};
+
+/// Represents a G_SHUFFLE_VECTOR.
+class GShuffleVector : public GenericMachineInstr {
+public:
+  Register getSrc1Reg() const { return getOperand(1).getReg(); }
+  Register getSrc2Reg() const { return getOperand(2).getReg(); }
+  ArrayRef<int> getMask() const { return getOperand(3).getShuffleMask(); }
+
+  static bool classof(const MachineInstr *MI) {
+    return MI->getOpcode() == TargetOpcode::G_SHUFFLE_VECTOR;
+  }
+};
+
 /// Represents a G_PTR_ADD.
 class GPtrAdd : public GenericMachineInstr {
 public:
@@ -737,6 +757,39 @@ public:
   static bool classof(const MachineInstr *MI) {
     return MI->getOpcode() == TargetOpcode::G_OR;
   };
+};
+
+/// Represents an extract vector element.
+class GExtractVectorElement : public GenericMachineInstr {
+public:
+  Register getVectorReg() const { return getOperand(1).getReg(); }
+  Register getIndexReg() const { return getOperand(2).getReg(); }
+
+  static bool classof(const MachineInstr *MI) {
+    return MI->getOpcode() == TargetOpcode::G_EXTRACT_VECTOR_ELT;
+  }
+};
+
+/// Represents an insert vector element.
+class GInsertVectorElement : public GenericMachineInstr {
+public:
+  Register getVectorReg() const { return getOperand(1).getReg(); }
+  Register getElementReg() const { return getOperand(2).getReg(); }
+  Register getIndexReg() const { return getOperand(3).getReg(); }
+
+  static bool classof(const MachineInstr *MI) {
+    return MI->getOpcode() == TargetOpcode::G_INSERT_VECTOR_ELT;
+  }
+};
+
+/// Represents a freeze.
+class GFreeze : public GenericMachineInstr {
+public:
+  Register getSourceReg() const { return getOperand(1).getReg(); }
+
+  static bool classof(const MachineInstr *MI) {
+    return MI->getOpcode() == TargetOpcode::G_FREEZE;
+  }
 };
 
 } // namespace llvm
