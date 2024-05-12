@@ -16,6 +16,7 @@
 #include "bolt/Core/AddressMap.h"
 #include "bolt/Core/BinaryData.h"
 #include "bolt/Core/BinarySection.h"
+#include "bolt/Core/BoltBisect.h"
 #include "bolt/Core/DebugData.h"
 #include "bolt/Core/JumpTable.h"
 #include "bolt/Core/MCPlusBuilder.h"
@@ -36,6 +37,7 @@
 #include "llvm/MC/MCStreamer.h"
 #include "llvm/MC/MCSymbol.h"
 #include "llvm/MC/TargetRegistry.h"
+#include "llvm/Support/ManagedStatic.h"
 #include "llvm/Support/ErrorOr.h"
 #include "llvm/Support/RWMutex.h"
 #include "llvm/Support/raw_ostream.h"
@@ -60,6 +62,7 @@ using namespace object;
 namespace bolt {
 
 class BinaryFunction;
+class BoltBisect;
 
 /// Information on loadable part of the file.
 struct SegmentInfo {
@@ -265,6 +268,10 @@ class BinaryContext {
   void deregisterSectionName(const BinarySection &Section);
 
 public:
+
+  BoltBisect &getBoltBisect() const {
+    return *BoltBisector;
+  }
   static Expected<std::unique_ptr<BinaryContext>>
   createBinaryContext(Triple TheTriple, StringRef InputFileName,
                       SubtargetFeatures *Features, bool IsPIC,
