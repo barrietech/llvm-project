@@ -271,6 +271,30 @@ public:
 
   TrivialFunctionAnalysisVisitor(CacheTy &Cache) : Cache(Cache) {}
 
+  bool IsFunctionTrivial(const Decl *D) {
+    auto CacheIt = Cache.find(D);
+    if (CacheIt != Cache.end())
+      return CacheIt->second;
+
+    // Treat a recursive function call to be trivial until proven otherwise.
+    auto [RecursiveIt, IsNew] = RecursiveFn.insert(D);
+    if (!IsNew)
+      return true;
+
+    const Stmt *Body = D->getBody();
+    if (!Body)
+      return false;
+
+    bool Result = Visit(Body);
+    if (!Result) // D and its mutually recursive callers are non-trivial.
+      RecursiveFn.clear();
+    else // Check if any of mutually recursive functions were non-trivial. 
+      Result = RecursiveFn.contains(D);
+    RecursiveFn.erase(D);
+
+    return Result;
+  }
+
   bool VisitStmt(const Stmt *S) {
     // All statements are non-trivial unless overriden later.
     // Don't even recurse into children by default.
@@ -357,7 +381,7 @@ public:
         Name == "addressof" || Name.find("__builtin") == 0)
       return true;
 
-    return TrivialFunctionAnalysis::isTrivialImpl(Callee, Cache);
+    return IsFunctionTrivial(Callee);
   }
 
   bool
@@ -392,7 +416,7 @@ public:
       return true;
 
     // Recursively descend into the callee to confirm that it's trivial as well.
-    return TrivialFunctionAnalysis::isTrivialImpl(Callee, Cache);
+    return IsFunctionTrivial(Callee);
   }
 
   bool VisitCXXOperatorCallExpr(const CXXOperatorCallExpr *OCE) {
@@ -402,7 +426,7 @@ public:
     if (!Callee)
       return false;
     // Recursively descend into the callee to confirm that it's trivial as well.
-    return TrivialFunctionAnalysis::isTrivialImpl(Callee, Cache);
+    return IsFunctionTrivial(Callee);
   }
 
   bool VisitCXXDefaultArgExpr(const CXXDefaultArgExpr *E) {
@@ -428,7 +452,7 @@ public:
     }
 
     // Recursively descend into the callee to confirm that it's trivial.
-    return TrivialFunctionAnalysis::isTrivialImpl(CE->getConstructor(), Cache);
+    return IsFunctionTrivial(CE->getConstructor());
   }
 
   bool VisitCXXNewExpr(const CXXNewExpr *NE) { return VisitChildren(NE); }
@@ -494,28 +518,13 @@ public:
 
 private:
   CacheTy &Cache;
+  llvm::DenseSet<llvm::PointerUnion<const Decl *>> RecursiveFn;
 };
 
 bool TrivialFunctionAnalysis::isTrivialImpl(
     const Decl *D, TrivialFunctionAnalysis::CacheTy &Cache) {
-  // Treat every recursive function as trivial until otherwise proven.
-  // This guarantees each function is evaluated at most once.
-  auto [It, IsNew] = Cache.insert(std::make_pair(D, true));
-  if (!IsNew)
-    return It->second;
-
-  const Stmt *Body = D->getBody();
-  if (!Body) {
-    Cache[D] = false;
-    return false;
-  }
-
   TrivialFunctionAnalysisVisitor V(Cache);
-  bool Result = V.Visit(Body);
-  if (!Result)
-    Cache[D] = false;
-
-  return Result;
+  return V.IsFunctionTrivial(D);
 }
 
 bool TrivialFunctionAnalysis::isTrivialImpl(
