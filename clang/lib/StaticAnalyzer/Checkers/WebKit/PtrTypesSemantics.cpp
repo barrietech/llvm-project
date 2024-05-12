@@ -288,7 +288,7 @@ public:
     bool Result = Visit(Body);
     if (!Result) // D and its mutually recursive callers are non-trivial.
       RecursiveFn.clear();
-    else // Check if any of mutually recursive functions were non-trivial. 
+    else // Check if any of mutually recursive functions were non-trivial.
       Result = RecursiveFn.contains(D);
     RecursiveFn.erase(D);
 
