@@ -3294,6 +3294,9 @@ public:
                                       const FieldDecl *FAMDecl,
                                       const FieldDecl *CountDecl);
 
+  bool getFieldOffsetInBits(const RecordDecl *RD, const FieldDecl *FD,
+                            int64_t &Offset);
+
   llvm::Value *EmitScalarPrePostIncDec(const UnaryOperator *E, LValue LV,
                                        bool isInc, bool isPre);
   ComplexPairTy EmitComplexPrePostIncDec(const UnaryOperator *E, LValue LV,
@@ -5149,6 +5152,9 @@ private:
                                      llvm::IntegerType *ResType,
                                      llvm::Value *EmittedE,
                                      bool IsDynamic);
+
+  llvm::Value *tryEmitObjectSizeCalculation(const Expr *E, unsigned Type,
+                                            llvm::IntegerType *ResType);
 
   llvm::Value *emitFlexibleArrayMemberSize(const Expr *E, unsigned Type,
                                            llvm::IntegerType *ResType);
