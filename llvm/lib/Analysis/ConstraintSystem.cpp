@@ -47,23 +47,24 @@ bool ConstraintSystem::eliminateUsingFM() {
     }
   }
 
+  // Track if an overflow occurred when computing coefficents
+  bool Overflow = false;
+
   // Process rows where the variable is != 0.
   unsigned NumRemainingConstraints = RemainingRows.size();
   for (unsigned R1 = 0; R1 < NumRemainingConstraints; R1++) {
     // FIXME do not use copy
     for (unsigned R2 = R1 + 1; R2 < NumRemainingConstraints; R2++) {
-      if (R1 == R2)
-        continue;
-
       int64_t UpperLast = getLastCoefficient(RemainingRows[R2], LastIdx);
       int64_t LowerLast = getLastCoefficient(RemainingRows[R1], LastIdx);
       assert(
           UpperLast != 0 && LowerLast != 0 &&
           "RemainingRows should only contain rows where the variable is != 0");
 
+      // ensure signs are different then swap if necessary to only
+      // deal with UpperLast > 0
       if ((LowerLast < 0 && UpperLast < 0) || (LowerLast > 0 && UpperLast > 0))
         continue;
-
       unsigned LowerR = R1;
       unsigned UpperR = R2;
       if (UpperLast < 0) {
@@ -71,43 +72,42 @@ bool ConstraintSystem::eliminateUsingFM() {
         std::swap(LowerLast, UpperLast);
       }
 
+      // The following loop does the element-wise operation on sparse
+      // vectors:
+      //
+      // NR = - UpperRow * LowerLast + LowerRow * UpperLast
       SmallVector<Entry, 8> NR;
       unsigned IdxUpper = 0;
       unsigned IdxLower = 0;
       auto &LowerRow = RemainingRows[LowerR];
       auto &UpperRow = RemainingRows[UpperR];
-      while (true) {
-        if (IdxUpper >= UpperRow.size() || IdxLower >= LowerRow.size())
-          break;
+
+      while (IdxUpper < UpperRow.size() && IdxLower < LowerRow.size()) {
         int64_t M1, M2, N;
         int64_t UpperV = 0;
         int64_t LowerV = 0;
-        uint16_t CurrentId = std::numeric_limits<uint16_t>::max();
-        if (IdxUpper < UpperRow.size()) {
-          CurrentId = std::min(UpperRow[IdxUpper].Id, CurrentId);
-        }
-        if (IdxLower < LowerRow.size()) {
-          CurrentId = std::min(LowerRow[IdxLower].Id, CurrentId);
-        }
+        uint16_t CurrentId =
+            std::min(UpperRow[IdxUpper].Id, LowerRow[IdxLower].Id);
 
-        if (IdxUpper < UpperRow.size() && UpperRow[IdxUpper].Id == CurrentId) {
+        if (UpperRow[IdxUpper].Id == CurrentId) {
           UpperV = UpperRow[IdxUpper].Coefficient;
-          IdxUpper++;
+          IdxUpper += 1;
         }
-
-        if (MulOverflow(UpperV, -1 * LowerLast, M1))
-          return false;
-        if (IdxLower < LowerRow.size() && LowerRow[IdxLower].Id == CurrentId) {
+        if (LowerRow[IdxLower].Id == CurrentId) {
           LowerV = LowerRow[IdxLower].Coefficient;
-          IdxLower++;
+          IdxLower += 1;
         }
 
-        if (MulOverflow(LowerV, UpperLast, M2))
-          return false;
-        if (AddOverflow(M1, M2, N))
-          return false;
+        if (MulOverflow(UpperV, -1 * LowerLast, M1) ||
+            MulOverflow(LowerV, UpperLast, M2) || AddOverflow(M1, M2, N)) {
+          Overflow = true;
+          continue;
+        }
+
+        // useless to add a 0 to a sparse vector
         if (N == 0)
           continue;
+
         NR.emplace_back(N, CurrentId);
       }
       if (NR.empty())
@@ -120,13 +120,16 @@ bool ConstraintSystem::eliminateUsingFM() {
   }
   NumVariables -= 1;
 
-  return true;
+  return !Overflow;
 }
 
 bool ConstraintSystem::mayHaveSolutionImpl() {
-  while (!Constraints.empty() && NumVariables > 1) {
-    if (!eliminateUsingFM())
-      return true;
+  while (!Constraints.empty() && Constraints.size() <= 500 && NumVariables > 1) {
+    if(!eliminateUsingFM()) {
+      LLVM_DEBUG(
+          dbgs()
+          << "Some new constraints has been ignored during elimination.\n");
+    };
   }
 
   if (Constraints.empty() || NumVariables > 1)
