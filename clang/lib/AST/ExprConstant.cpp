@@ -2926,7 +2926,7 @@ static bool handleFloatFloatBinOp(EvalInfo &Info, const BinaryOperator *E,
   //   If during the evaluation of an expression, the result is not
   //   mathematically defined [...], the behavior is undefined.
   // FIXME: C++ rules require us to not conform to IEEE 754 here.
-  if (LHS.isNaN()) {
+  if (!Info.getLangOpts().CPlusPlus23 && LHS.isNaN()) {
     Info.CCEDiag(E, diag::note_constexpr_float_arithmetic) << LHS.isNaN();
     return Info.noteUndefinedBehavior();
   }
@@ -14617,6 +14617,8 @@ public:
     return true;
   }
 
+  void StoreExponent(LValue Pointer, int exp);
+
   bool VisitCallExpr(const CallExpr *E);
 
   bool VisitUnaryOperator(const UnaryOperator *E);
@@ -14674,6 +14676,31 @@ static bool TryEvaluateBuiltinNaN(const ASTContext &Context,
 
   return true;
 }
+//  Checks that the value x is in the range (-1;-0.5], [0.5; 1)
+static bool isInFrexpResultRange(const llvm::APFloat &x) {
+  llvm::APFloat minusOne(x.getSemantics(), "-1.0");
+  llvm::APFloat minusHalf(x.getSemantics(), "-0.5");
+  llvm::APFloat half(x.getSemantics(), "0.5");
+  llvm::APFloat one(x.getSemantics(), "1.0");
+
+  return ((x.compare(minusOne) == llvm::APFloat::cmpGreaterThan &&
+           x.compare(minusHalf) != llvm::APFloat::cmpGreaterThan) ||
+          (x.compare(half) != llvm::APFloat::cmpLessThan &&
+           x.compare(one) == llvm::APFloat::cmpLessThan));
+}
+
+void FloatExprEvaluator::StoreExponent(LValue Pointer, int exp) {
+  const APValue::LValueBase Base = Pointer.getLValueBase();
+  auto *VD = const_cast<ValueDecl *>(Base.dyn_cast<const ValueDecl *>());
+  if (auto *VarD = dyn_cast<VarDecl>(VD)) {
+    clang::IntegerLiteral *IL =
+        clang::IntegerLiteral::Create(Info.Ctx, llvm::APSInt(32, exp),
+                                      Info.Ctx.IntTy, clang::SourceLocation());
+    VarD->setInit(IL);
+  } else {
+    llvm_unreachable("expecting a VarDecl for an exponent");
+  }
+}
 
 bool FloatExprEvaluator::VisitCallExpr(const CallExpr *E) {
   if (!IsConstantEvaluatedBuiltinCall(E))
@@ -14683,6 +14710,22 @@ bool FloatExprEvaluator::VisitCallExpr(const CallExpr *E) {
   default:
     return false;
 
+  case Builtin::BI__builtin_frexp:
+  case Builtin::BI__builtin_frexpf:
+  case Builtin::BI__builtin_frexpl: {
+    LValue Pointer;
+    if (!EvaluateFloat(E->getArg(0), Result, Info) ||
+        !EvaluatePointer(E->getArg(1), Pointer, Info))
+      return false;
+    int FrexpExp;
+    llvm::RoundingMode RM = getActiveRoundingMode(Info, E);
+    Result = llvm::frexp(Result, FrexpExp, RM);
+    assert((Result.isZero() || Result.isNaN() || Result.isInfinity() ||
+            isInFrexpResultRange(Result)) &&
+           "The value is not in the expected range for frexp.");
+    StoreExponent(Pointer, FrexpExp);
+    return true;
+  }
   case Builtin::BI__builtin_huge_val:
   case Builtin::BI__builtin_huge_valf:
   case Builtin::BI__builtin_huge_vall:
@@ -14756,6 +14799,9 @@ bool FloatExprEvaluator::VisitCallExpr(const CallExpr *E) {
     return true;
   }
 
+  case Builtin::BIfmax:
+  case Builtin::BIfmaxf:
+  case Builtin::BIfmaxl:
   case Builtin::BI__builtin_fmax:
   case Builtin::BI__builtin_fmaxf:
   case Builtin::BI__builtin_fmaxl:
@@ -14774,6 +14820,9 @@ bool FloatExprEvaluator::VisitCallExpr(const CallExpr *E) {
     return true;
   }
 
+  case Builtin::BIfmin:
+  case Builtin::BIfminf:
+  case Builtin::BIfminl:
   case Builtin::BI__builtin_fmin:
   case Builtin::BI__builtin_fminf:
   case Builtin::BI__builtin_fminl:
