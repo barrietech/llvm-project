@@ -2495,9 +2495,8 @@ Parser::ParseModuleDecl(Sema::ModuleImportState &ImportState) {
   }
 
   SmallVector<std::pair<IdentifierInfo *, SourceLocation>, 2> Path;
-  if (ParseModuleName(ModuleLoc, Path, /*IsImport*/ false))
+  if (ParseModuleName(ModuleLoc, Path, /*IsImport=*/false))
     return nullptr;
-
   // Parse the optional module-partition.
   SmallVector<std::pair<IdentifierInfo *, SourceLocation>, 2> Partition;
   if (Tok.is(tok::colon)) {
@@ -2506,7 +2505,7 @@ Parser::ParseModuleDecl(Sema::ModuleImportState &ImportState) {
       Diag(ColonLoc, diag::err_unsupported_module_partition)
           << SourceRange(ColonLoc, Partition.back().second);
     // Recover by ignoring the partition name.
-    else if (ParseModuleName(ModuleLoc, Partition, /*IsImport*/ false))
+    else if (ParseModuleName(ModuleLoc, Partition, /*IsImport=*/false))
       return nullptr;
   }
 
@@ -2571,12 +2570,12 @@ Decl *Parser::ParseModuleImport(SourceLocation AtLoc,
       Diag(ColonLoc, diag::err_unsupported_module_partition)
           << SourceRange(ColonLoc, Path.back().second);
     // Recover by leaving partition empty.
-    else if (ParseModuleName(ColonLoc, Path, /*IsImport*/ true))
+    else if (ParseModuleName(ColonLoc, Path, /*IsImport=*/true))
       return nullptr;
     else
       IsPartition = true;
   } else {
-    if (ParseModuleName(ImportLoc, Path, /*IsImport*/ true))
+    if (ParseModuleName(ImportLoc, Path, /*IsImport=*/true))
       return nullptr;
   }
 
@@ -2686,7 +2685,7 @@ bool Parser::ParseModuleName(
       }
 
       Diag(Tok, diag::err_module_expected_ident) << IsImport;
-      SkipUntil(tok::semi);
+      SkipUntil(tok::semi, StopBeforeMatch);
       return true;
     }
 
@@ -2694,10 +2693,8 @@ bool Parser::ParseModuleName(
     Path.push_back(std::make_pair(Tok.getIdentifierInfo(), Tok.getLocation()));
     ConsumeToken();
 
-    if (Tok.isNot(tok::period))
+    if (!TryConsumeToken(tok::period))
       return false;
-
-    ConsumeToken();
   }
 }
 

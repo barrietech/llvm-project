@@ -862,6 +862,15 @@ bool Preprocessor::HandleIdentifier(Token &Identifier) {
     ModuleImportExpectsIdentifier = true;
     CurLexerCallback = CLK_LexAfterModuleImport;
   }
+
+  if ((II.isModulesDeclaration() || Identifier.is(tok::kw_module)) &&
+      !InMacroArgs && !DisableMacroExpansion &&
+      (getLangOpts().Modules || getLangOpts().DebuggerSupport) &&
+      CurLexerCallback != CLK_CachingLexer) {
+    ModuleDeclarationExpectsIdentifier = true;
+    ModuleDeclarationLexingPartitionName = false;
+    CurLexerCallback = CLK_LexAfterModuleDecl;
+  }
   return true;
 }
 
@@ -942,6 +951,9 @@ void Preprocessor::Lex(Token &Result) {
         } else if (Result.getIdentifierInfo() == getIdentifierInfo("module")) {
           TrackGMFState.handleModule(StdCXXImportSeqState.afterTopLevelSeq());
           ModuleDeclState.handleModule();
+          ModuleDeclarationExpectsIdentifier = true;
+          ModuleDeclarationLexingPartitionName = false;
+          CurLexerCallback = CLK_LexAfterModuleDecl;
           break;
         }
       }
@@ -1326,6 +1338,103 @@ bool Preprocessor::LexAfterModuleImport(Token &Result) {
     EnterTokens(Suffix);
     return false;
   }
+  return true;
+}
+
+/// Lex a token following the 'module' contextual keyword.
+///
+/// [cpp.module]/p2:
+/// The pp-tokens, if any, of a pp-module shall be of the form:
+///       pp-module-name pp-module-partition[opt] pp-tokens[opt]
+///
+/// where the pp-tokens (if any) shall not begin with a ( preprocessing token
+/// and the grammar non-terminals are defined as:
+///       pp-module-name:
+///             pp-module-name-qualifierp[opt] identifier
+///       pp-module-partition:
+///             : pp-module-name-qualifier[opt] identifier
+///       pp-module-name-qualifier:
+///             identifier .
+///             pp-module-name-qualifier identifier .
+/// No identifier in the pp-module-name or pp-module-partition shall currently
+/// be defined as an object-like macro.
+///
+/// [cpp.module]/p3:
+/// Any preprocessing tokens after the module preprocessing token in the module
+/// directive are processed just as in normal text.
+bool Preprocessor::LexAfterModuleDecl(Token &Result) {
+  // Figure out what kind of lexer we actually have.
+  recomputeCurLexerKind();
+  LexUnexpandedToken(Result);
+
+  auto EnterTokens = [this](ArrayRef<Token> Toks, bool DisableMacroExpansion) {
+    auto ToksCopy = std::make_unique<Token[]>(Toks.size());
+    std::copy(Toks.begin(), Toks.end(), ToksCopy.get());
+    EnterTokenStream(std::move(ToksCopy), Toks.size(), DisableMacroExpansion,
+                     /*IsReinject=*/false);
+  };
+
+  // If we don't expect an identifier but got an identifier, it's not a part of
+  // module name.
+  if (!ModuleDeclarationExpectsIdentifier && Result.is(tok::identifier)) {
+    EnterTokens(Result, /*DisableMacroExpansion=*/false);
+    return false;
+  }
+
+  // The token sequence
+  //
+  // export[opt] module identifier (. identifier)*
+  //
+  // indicates a module directive. We already saw the 'module'
+  // contextual keyword, so now we're looking for the identifiers.
+  if (ModuleDeclarationExpectsIdentifier && Result.is(tok::identifier)) {
+    auto *MI = getMacroInfo(Result.getIdentifierInfo());
+    if (MI && MI->isObjectLike()) {
+      Diag(Result, diag::err_module_decl_cannot_be_macros)
+          << Result.getLocation() << ModuleDeclarationLexingPartitionName
+          << Result.getIdentifierInfo();
+    }
+    ModuleDeclarationExpectsIdentifier = false;
+    CurLexerCallback = CLK_LexAfterModuleDecl;
+    return true;
+  }
+
+  // If we're expecting a '.', a ':' or a ';', and we got a '.', then wait until
+  // we see the next identifier.
+  if (!ModuleDeclarationExpectsIdentifier &&
+      Result.isOneOf(tok::period, tok::colon)) {
+    ModuleDeclarationExpectsIdentifier = true;
+    ModuleDeclarationLexingPartitionName = Result.is(tok::colon);
+    CurLexerCallback = CLK_LexAfterModuleDecl;
+    return true;
+  }
+
+  // [cpp.module]/p2: where the pp-tokens (if any) shall not begin with a (
+  // preprocessing token [...]
+  if (!ModuleDeclarationExpectsIdentifier && Result.is(tok::l_paren)) {
+    ModuleDeclarationExpectsIdentifier = false;
+    Diag(Result, diag::err_unxepected_paren_in_module_decl)
+        << ModuleDeclarationLexingPartitionName;
+
+    // Skip until see one of module name separator '.', ':' or ';'.
+    Token Tok;
+    // We already have a '('.
+    unsigned NumParens = 1;
+    while (true) {
+      LexUnexpandedToken(Tok);
+      if (Tok.isOneOf(tok::eod, tok::eof, tok::semi, tok::period, tok::colon)) {
+        EnterTokens(Tok, /*DisableMacroExpansion=*/true);
+        break;
+      }
+      if (Tok.is(tok::l_paren))
+        NumParens++;
+      else if (Tok.is(tok::r_paren) && --NumParens == 0)
+        break;
+    }
+    CurLexerCallback = CLK_LexAfterModuleDecl;
+    return false;
+  }
+
   return true;
 }
 
