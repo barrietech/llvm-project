@@ -4561,3 +4561,10 @@ def CodeAlign: StmtAttr {
     static constexpr int MaximumAlignment = 4096;
   }];
 }
+
+def Wraps : DeclOrTypeAttr {
+  let Spellings = [Clang<"wraps">];
+  let Subjects = SubjectList<[Var, TypedefName, Field]>;
+  let Documentation = [WrapsDocs];
+  let LangOpts = [COnly];
+}
