@@ -259,7 +259,8 @@ bool DwarfExpression::addMachineRegExpression(const TargetRegisterInfo &TRI,
 
   bool HasComplexExpression = false;
   auto Op = ExprCursor.peek();
-  if (Op && Op->getOp() != dwarf::DW_OP_LLVM_fragment)
+  if (Op && Op->getOp() != dwarf::DW_OP_LLVM_fragment &&
+      Op->getOp() != dwarf::DW_OP_bit_piece)
     HasComplexExpression = true;
 
   // If the register can only be described by a complex expression (i.e.,
@@ -314,7 +315,8 @@ bool DwarfExpression::addMachineRegExpression(const TargetRegisterInfo &TRI,
     // operation would emit an OpPiece anyway.
     auto NextOp = ExprCursor.peek();
     if (SubRegisterSizeInBits && NextOp &&
-        (NextOp->getOp() != dwarf::DW_OP_LLVM_fragment))
+        NextOp->getOp() != dwarf::DW_OP_LLVM_fragment &&
+        NextOp->getOp() != dwarf::DW_OP_bit_piece)
       maskSubRegister();
     return true;
   }
@@ -382,7 +384,8 @@ bool DwarfExpression::addMachineRegExpression(const TargetRegisterInfo &TRI,
   // operation would emit an OpPiece anyway.
   auto NextOp = ExprCursor.peek();
   if (SubRegisterSizeInBits && NextOp &&
-      (NextOp->getOp() != dwarf::DW_OP_LLVM_fragment))
+      NextOp->getOp() != dwarf::DW_OP_LLVM_fragment &&
+      NextOp->getOp() != dwarf::DW_OP_bit_piece)
     maskSubRegister();
 
   return true;
@@ -473,6 +476,7 @@ static bool isMemoryLocation(DIExpressionCursor ExprCursor) {
     switch (Op->getOp()) {
     case dwarf::DW_OP_deref:
     case dwarf::DW_OP_LLVM_fragment:
+    case dwarf::DW_OP_bit_piece:
       break;
     default:
       return false;
@@ -644,6 +648,9 @@ bool DwarfExpression::addExpression(
       emitOp(dwarf::DW_OP_bregx);
       emitUnsigned(Op->getArg(0));
       emitSigned(Op->getArg(1));
+      break;
+    case dwarf::DW_OP_bit_piece:
+      addOpPiece(Op->getArg(0), Op->getArg(1));
       break;
     default:
       llvm_unreachable("unhandled opcode found in expression");
