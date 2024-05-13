@@ -935,6 +935,22 @@ static void simplifyRecipe(VPRecipeBase &R, VPTypeAnalysis &TypeInfo) {
 #endif
   }
 
+  VPValue *X;
+  VPValue *Y;
+  VPValue *X1;
+  VPValue *Y1;
+  // Simplify (X && Y) || (X && !Y) -> X.
+  // TODO: Split up into simpler, modular combines: (X && Y) || (X && Z) into X
+  // && (Y || Z) and (X || !X) into true. This requires queuing newly created
+  // recipes to be visited during simplification.
+  if (match(&R, m_c_LogicalOr(
+                    m_c_LogicalAnd(m_VPValue(X), m_VPValue(Y)),
+                    m_c_LogicalAnd(m_VPValue(X1), m_Not(m_VPValue(Y1))))) &&
+      X == X1 && Y == Y1) {
+    R.getVPSingleValue()->replaceAllUsesWith(X);
+    return;
+  }
+
   if (match(&R, m_CombineOr(m_Mul(m_VPValue(A), m_SpecificInt(1)),
                             m_Mul(m_SpecificInt(1), m_VPValue(A)))))
     return R.getVPSingleValue()->replaceAllUsesWith(A);
