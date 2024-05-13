@@ -111,6 +111,7 @@ extern "C" LLVM_EXTERNAL_VISIBILITY void LLVMInitializeRISCVTarget() {
   initializeRISCVCodeGenPreparePass(*PR);
   initializeRISCVPostRAExpandPseudoPass(*PR);
   initializeRISCVMergeBaseOffsetOptPass(*PR);
+  initializeRISCVMIPeepholeOptPass(*PR);
   initializeRISCVOptWInstrsPass(*PR);
   initializeRISCVPreRAExpandPseudoPass(*PR);
   initializeRISCVExpandPseudoPass(*PR);
@@ -507,6 +508,7 @@ void RISCVPassConfig::addPreEmitPass() {
 void RISCVPassConfig::addPreEmitPass2() {
   if (TM->getOptLevel() != CodeGenOptLevel::None) {
     addPass(createRISCVMoveMergePass());
+    addPass(createRISCVMIPeepholeOptPass());
     // Schedule PushPop Optimization before expansion of Pseudo instruction,
     // ensuring return instruction is detected correctly.
     addPass(createRISCVPushPopOptimizationPass());
