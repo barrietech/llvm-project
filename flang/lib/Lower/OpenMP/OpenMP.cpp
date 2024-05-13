@@ -2225,6 +2225,9 @@ genOMP(Fortran::lower::AbstractConverter &converter,
     const bool genNested = !nextDir;
     const bool outerCombined = outermostLeafConstruct && nextDir.has_value();
     switch (leafDir) {
+    case llvm::omp::Directive::OMPD_masked:
+      TODO(currentLocation,
+           "Unhandled Directive " + llvm::omp::getOpenMPDirectiveName(leafDir));
     case llvm::omp::Directive::OMPD_master:
       // 2.16 MASTER construct.
       genMasterOp(converter, symTable, semaCtx, eval, genNested,

@@ -266,6 +266,8 @@ TYPE_PARSER(
         construct<OmpClause>(construct<OmpClause::DynamicAllocators>()) ||
     "ENTER" >> construct<OmpClause>(construct<OmpClause::Enter>(
                    parenthesized(Parser<OmpObjectList>{}))) ||
+    "FILTER" >> construct<OmpClause>(construct<OmpClause::Filter>(
+                    parenthesized(scalarIntExpr))) ||
     "FINAL" >> construct<OmpClause>(construct<OmpClause::Final>(
                    parenthesized(scalarLogicalExpr))) ||
     "FULL" >> construct<OmpClause>(construct<OmpClause::Full>()) ||
@@ -486,9 +488,17 @@ TYPE_PARSER(
     endOfLine)
 
 // Directives enclosing structured-block
-TYPE_PARSER(construct<OmpBlockDirective>(first(
+TYPE_PARSER(construct<OmpBlockDirective>(first("MASKED TASKLOOP SIMD" >>
+        pure(llvm::omp::Directive::OMPD_masked_taskloop_simd),
+    "MASKED TASKLOOP" >> pure(llvm::omp::Directive::OMPD_masked_taskloop),
+    "MASKED" >> pure(llvm::omp::Directive::OMPD_masked),
     "MASTER" >> pure(llvm::omp::Directive::OMPD_master),
     "ORDERED" >> pure(llvm::omp::Directive::OMPD_ordered),
+    "PARALLEL MASKED TASKLOOP SIMD" >>
+        pure(llvm::omp::Directive::OMPD_parallel_masked_taskloop_simd),
+    "PARALLEL MASKED TASKLOOP" >>
+        pure(llvm::omp::Directive::OMPD_parallel_masked_taskloop),
+    "PARALLEL MASKED" >> pure(llvm::omp::Directive::OMPD_parallel_masked),
     "PARALLEL WORKSHARE" >> pure(llvm::omp::Directive::OMPD_parallel_workshare),
     "PARALLEL" >> pure(llvm::omp::Directive::OMPD_parallel),
     "SINGLE" >> pure(llvm::omp::Directive::OMPD_single),
