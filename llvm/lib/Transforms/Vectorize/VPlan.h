@@ -41,6 +41,7 @@
 #include "llvm/IR/DebugLoc.h"
 #include "llvm/IR/FMF.h"
 #include "llvm/IR/Operator.h"
+#include "llvm/Support/InstructionCost.h"
 #include <algorithm>
 #include <cassert>
 #include <cstddef>
@@ -699,6 +700,15 @@ public:
 #endif
 };
 
+/// Struct to hold various analysis needed for cost computations.
+struct VPCostContext {
+  const TargetTransformInfo &TTI;
+  VPTypeAnalysis Types;
+
+  VPCostContext(const TargetTransformInfo &TTI, Type *CanIVTy, LLVMContext &Ctx)
+      : TTI(TTI), Types(CanIVTy, Ctx) {}
+};
+
 /// VPRecipeBase is a base class modeling a sequence of one or more output IR
 /// instructions. VPRecipeBase owns the VPValues it defines through VPDef
 /// and is responsible for deleting its defined values. Single-value
@@ -737,6 +747,12 @@ public:
   /// The method which generates the output IR instructions that correspond to
   /// this VPRecipe, thereby "executing" the VPlan.
   virtual void execute(VPTransformState &State) = 0;
+
+  /// Compute the cost for the recipe. Returns an invalid cost if the recipe
+  /// does not yet implement computing the cost.
+  virtual InstructionCost computeCost(ElementCount VF, VPCostContext &Ctx) {
+    return InstructionCost::getInvalid();
+  }
 
   /// Insert an unlinked recipe into a basic block immediately before
   /// the specified recipe.
@@ -1348,6 +1364,8 @@ public:
   /// Produce widened copies of all Ingredients.
   void execute(VPTransformState &State) override;
 
+  InstructionCost computeCost(ElementCount VF, VPCostContext &Ctx) override;
+
   unsigned getOpcode() const { return Opcode; }
 
 #if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
@@ -1372,8 +1390,6 @@ public:
         ResultTy(ResultTy) {
     assert(UI.getOpcode() == Opcode &&
            "opcode of underlying cast doesn't match");
-    assert(UI.getType() == ResultTy &&
-           "result type of underlying cast doesn't match");
   }
 
   VPWidenCastRecipe(Instruction::CastOps Opcode, VPValue *Op, Type *ResultTy)
@@ -2087,6 +2103,8 @@ public:
            "Op must be an operand of the recipe");
     return Op == getAddr() && !llvm::is_contained(getStoredValues(), Op);
   }
+
+  Instruction *getInsertPos() const { return IG->getInsertPos(); }
 };
 
 /// A recipe to represent inloop reduction operations, performing a reduction on
@@ -3193,6 +3211,11 @@ public:
     return any_of(VFs, [](ElementCount VF) { return VF.isScalable(); });
   }
 
+  iterator_range<SmallSetVector<ElementCount, 2>::iterator>
+  vectorFactors() const {
+    return {VFs.begin(), VFs.end()};
+  }
+
   bool hasScalarVFOnly() const { return VFs.size() == 1 && VFs[0].isScalar(); }
 
   bool hasUF(unsigned UF) const { return UFs.empty() || UFs.contains(UF); }
@@ -3619,6 +3642,10 @@ inline bool isUniformAfterVectorization(VPValue *VPV) {
     return VPI->getOpcode() == VPInstruction::ComputeReductionResult;
   return false;
 }
+
+/// Return true if \p Cond is an uniform compare.
+bool isUniformCompare(VPValue *Cond);
+
 } // end namespace vputils
 
 } // end namespace llvm

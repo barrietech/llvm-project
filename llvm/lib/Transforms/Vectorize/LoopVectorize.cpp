@@ -59,6 +59,7 @@
 #include "VPlan.h"
 #include "VPlanAnalysis.h"
 #include "VPlanHCFGBuilder.h"
+#include "VPlanPatternMatch.h"
 #include "VPlanTransforms.h"
 #include "VPlanVerifier.h"
 #include "llvm/ADT/APInt.h"
@@ -1621,6 +1622,12 @@ public:
   /// \p VF is the vectorization factor chosen for the original loop.
   bool isEpilogueVectorizationProfitable(const ElementCount VF) const;
 
+  /// Return the cost of instructions in an inloop reduction pattern, if I is
+  /// part of that pattern.
+  std::optional<InstructionCost>
+  getReductionPatternCost(Instruction *I, ElementCount VF, Type *VectorTy,
+                          TTI::TargetCostKind CostKind) const;
+
 private:
   unsigned NumPredStores = 0;
 
@@ -1646,20 +1653,10 @@ private:
   /// of elements.
   ElementCount getMaxLegalScalableVF(unsigned MaxSafeElements);
 
-  /// Returns the execution time cost of an instruction for a given vector
-  /// width. Vector width of one means scalar.
-  VectorizationCostTy getInstructionCost(Instruction *I, ElementCount VF);
-
   /// The cost-computation logic from getInstructionCost which provides
   /// the vector type as an output parameter.
   InstructionCost getInstructionCost(Instruction *I, ElementCount VF,
                                      Type *&VectorTy);
-
-  /// Return the cost of instructions in an inloop reduction pattern, if I is
-  /// part of that pattern.
-  std::optional<InstructionCost>
-  getReductionPatternCost(Instruction *I, ElementCount VF, Type *VectorTy,
-                          TTI::TargetCostKind CostKind) const;
 
   /// Calculate vectorization cost of memory instruction \p I.
   InstructionCost getMemoryInstructionCost(Instruction *I, ElementCount VF);
@@ -1813,6 +1810,10 @@ private:
   }
 
 public:
+  /// Returns the execution time cost of an instruction for a given vector
+  /// width. Vector width of one means scalar.
+  VectorizationCostTy getInstructionCost(Instruction *I, ElementCount VF);
+
   /// The loop that we evaluate.
   Loop *TheLoop;
 
@@ -7391,6 +7392,202 @@ LoopVectorizationPlanner::plan(ElementCount UserVF, unsigned UserIC) {
   return VF;
 }
 
+static InstructionCost
+computeCostForRecipe(VPRecipeBase *R, ElementCount VF,
+                     const SmallPtrSetImpl<Instruction *> &SkipCostComputation,
+                     LoopVectorizationCostModel &CM, VPCostContext CostCtx) {
+  Instruction *UI = nullptr;
+  if (auto *S = dyn_cast<VPSingleDefRecipe>(R))
+    UI = dyn_cast_or_null<Instruction>(S->getUnderlyingValue());
+  if (UI &&
+      (CM.VecValuesToIgnore.contains(UI) || SkipCostComputation.contains(UI)))
+    return 0;
+
+  InstructionCost RecipeCost = R->computeCost(VF, CostCtx);
+  if (!RecipeCost.isValid()) {
+    if (auto *IG = dyn_cast<VPInterleaveRecipe>(R)) {
+      RecipeCost = CM.getInstructionCost(IG->getInsertPos(), VF).first;
+    } else if (auto *WidenMem = dyn_cast<VPWidenMemoryRecipe>(R)) {
+      RecipeCost = CM.getInstructionCost(&WidenMem->getIngredient(), VF).first;
+    } else if (UI) {
+      RecipeCost = CM.getInstructionCost(UI, VF).first;
+    } else
+      return 0;
+  }
+  if (ForceTargetInstructionCost.getNumOccurrences() > 0 &&
+      RecipeCost.isValid())
+    RecipeCost = InstructionCost(ForceTargetInstructionCost);
+
+  LLVM_DEBUG({
+    dbgs() << "Cost of " << RecipeCost << " for VF " << VF << ": ";
+    R->dump();
+  });
+  return RecipeCost;
+}
+
+static InstructionCost computeCostForReplicatorRegion(
+    VPRegionBlock *Region, ElementCount VF,
+    SmallPtrSetImpl<Instruction *> &SkipCostComputation,
+    LoopVectorizationCostModel &CM, LLVMContext &Ctx, VPCostContext CostCtx) {
+  using namespace llvm::VPlanPatternMatch;
+  InstructionCost RegionCost = 0;
+  assert(Region->isReplicator() &&
+         "can only compute cost for a replicator region");
+  VPBasicBlock *Then =
+      cast<VPBasicBlock>(Region->getEntry()->getSuccessors()[0]);
+  for (VPRecipeBase &R : *Then)
+    RegionCost +=
+        computeCostForRecipe(&R, VF, SkipCostComputation, CM, CostCtx);
+
+  // Note the cost estimates below closely match the current legacy cost model.
+  auto *BOM =
+      cast<VPBranchOnMaskRecipe>(&Region->getEntryBasicBlock()->front());
+  VPValue *Cond = BOM->getOperand(0);
+
+  // Check if Cond is a uniform compare or a header mask.
+  bool IsHeaderMaskOrUniformCond =
+      vputils::isUniformCompare(Cond) ||
+      match(Cond, m_ActiveLaneMask(m_VPValue(), m_VPValue())) ||
+      match(Cond, m_Binary<Instruction::ICmp>(m_VPValue(), m_VPValue())) ||
+      isa<VPActiveLaneMaskPHIRecipe>(Cond);
+  if (IsHeaderMaskOrUniformCond || VF.isScalable())
+    return RegionCost;
+
+  // For the scalar case, we may not always execute the original predicated
+  // block, Thus, scale the block's cost by the probability of executing it.
+  // blockNeedsPredication from Legal is used so as to not include all blocks in
+  // tail folded loops.
+  if (VF.isScalar())
+    return RegionCost / getReciprocalPredBlockProb();
+
+  // Add the cost for branches around scalarized and predicated blocks.
+  TTI::TargetCostKind CostKind = TTI::TCK_RecipThroughput;
+  auto *Vec_i1Ty = VectorType::get(IntegerType::getInt1Ty(Ctx), VF);
+  return RegionCost +
+         CostCtx.TTI.getScalarizationOverhead(
+             Vec_i1Ty, APInt::getAllOnes(VF.getFixedValue()),
+             /*Insert*/ false, /*Extract*/ true, CostKind) +
+         (CostCtx.TTI.getCFInstrCost(Instruction::Br, CostKind) *
+          VF.getFixedValue());
+}
+
+InstructionCost LoopVectorizationPlanner::computeCost(VPlan &Plan,
+                                                      ElementCount VF) const {
+  InstructionCost Cost = 0;
+  SmallPtrSet<Instruction *, 8> SkipCostComputation;
+  LLVMContext &Ctx = OrigLoop->getHeader()->getContext();
+  VPCostContext CostCtx(CM.TTI, Legal->getWidestInductionType(), Ctx);
+
+  // Cost modeling for inductions is inaccurate in the legacy cost model
+  // compared to the recipes that are generated. To match here initially during
+  // VPlan cost model bring up directly use the induction costs from the legacy
+  // cost model and skip induction recipes. Note that we do this as
+  // pre-processing; the VPlan may not have any recipes associated with the
+  // original induction increment instruction.
+  // TODO: Switch to more accurate costing based on VPlan.
+  for (const auto &[IV, _] : Legal->getInductionVars()) {
+    Instruction *IVInc = cast<Instruction>(
+        IV->getIncomingValueForBlock(OrigLoop->getLoopLatch()));
+    InstructionCost InductionCost = CM.getInstructionCost(IVInc, VF).first;
+    LLVM_DEBUG({
+      dbgs() << "Cost of " << InductionCost << " for VF " << VF
+             << ":\n induction increment " << *IVInc << "\n";
+      IVInc->dump();
+    });
+    Cost += InductionCost;
+    SkipCostComputation.insert(IVInc);
+  }
+
+  // The legacy cost model has special logic to compute the cost of in-loop
+  // reductions, which may be smaller than the sum of all instructions involved
+  // in the reduction. Pre-compute the cost for now.
+  // TODO: Switch to costing based on VPlan once the logic has been ported.
+  for (const auto &[RedPhi, RdxDesc] : Legal->getReductionVars()) {
+    if (!CM.isInLoopReduction(RedPhi))
+      continue;
+
+    SmallVector<Instruction *, 4> ReductionOperations =
+        RdxDesc.getReductionOpChain(RedPhi, OrigLoop);
+    // Also include the operands of instructions in the chain, as the cost-model
+    // may mark extends as free.
+    for (unsigned I = 0, E = ReductionOperations.size(); I != E; ++I) {
+      for (Value *Op : ReductionOperations[I]->operands()) {
+        if (auto *I = dyn_cast<Instruction>(Op))
+          ReductionOperations.push_back(I);
+      }
+    }
+    for (Instruction *I : ReductionOperations) {
+      auto ReductionCost = CM.getReductionPatternCost(
+          I, VF, ToVectorTy(I->getType(), VF), TTI::TCK_RecipThroughput);
+      if (!ReductionCost)
+        continue;
+
+      if (!SkipCostComputation.insert(I).second)
+        continue;
+      dbgs() << "Cost of " << ReductionCost << " for VF " << VF
+             << ":\n in-loop reduction " << *I << "\n";
+      Cost += *ReductionCost;
+    }
+  }
+
+  VPBasicBlock *Header =
+      cast<VPBasicBlock>(Plan.getVectorLoopRegion()->getEntry());
+  for (VPBlockBase *Block : to_vector(vp_depth_first_shallow(Header))) {
+    if (auto *Region = dyn_cast<VPRegionBlock>(Block)) {
+      Cost += computeCostForReplicatorRegion(Region, VF, SkipCostComputation,
+                                             CM, Ctx, CostCtx);
+      continue;
+    }
+
+    for (VPRecipeBase &R : *cast<VPBasicBlock>(Block))
+      Cost += computeCostForRecipe(&R, VF, SkipCostComputation, CM, CostCtx);
+  }
+
+  // Add the cost for the backedge.
+  Cost += 1;
+  LLVM_DEBUG(dbgs() << "Cost for VF " << VF << ": " << Cost << "\n");
+  return Cost;
+}
+
+VPlan &LoopVectorizationPlanner::getBestPlan() const {
+  // If there is a single VPlan with a single VF, return it directly.
+  VPlan &FirstPlan = *VPlans[0];
+  if (VPlans.size() == 1 && size(FirstPlan.vectorFactors()) == 1)
+    return FirstPlan;
+
+  VPlan *BestPlan = &FirstPlan;
+  ElementCount ScalarVF = ElementCount::getFixed(1);
+  assert(hasPlanWithVF(ScalarVF) &&
+         "More than a single plan/VF w/o any plan having scalar VF");
+
+  InstructionCost ScalarCost = computeCost(
+      getBestPlanFor(ElementCount::getFixed(1)), ElementCount::getFixed(1));
+  VectorizationFactor BestFactor(ScalarVF, ScalarCost, ScalarCost);
+
+  bool ForceVectorization = Hints.getForce() == LoopVectorizeHints::FK_Enabled;
+  if (ForceVectorization) {
+    // Ignore scalar width, because the user explicitly wants vectorization.
+    // Initialize cost to max so that VF = 2 is, at least, chosen during cost
+    // evaluation.
+    BestFactor.Cost = InstructionCost::getMax();
+  }
+
+  for (auto &P : VPlans) {
+    for (ElementCount VF : P->vectorFactors()) {
+      if (VF.isScalar())
+        continue;
+      InstructionCost Cost = computeCost(*P, VF);
+      VectorizationFactor CurrentFactor(VF, Cost, ScalarCost);
+      if (isMoreProfitable(CurrentFactor, BestFactor)) {
+        BestFactor = CurrentFactor;
+        BestPlan = &*P;
+      }
+    }
+  }
+  BestPlan->setVF(BestFactor.Width);
+  return *BestPlan;
+}
+
 VPlan &LoopVectorizationPlanner::getBestPlanFor(ElementCount VF) const {
   assert(count_if(VPlans,
                   [VF](const VPlanPtr &Plan) { return Plan->hasVF(VF); }) ==
@@ -10255,8 +10452,15 @@ bool LoopVectorizePass::processLoop(Loop *L) {
                                VF.MinProfitableTripCount, IC, &LVL, &CM, BFI,
                                PSI, Checks);
 
-        VPlan &BestPlan = LVP.getBestPlanFor(VF.Width);
-        LVP.executePlan(VF.Width, IC, BestPlan, LB, DT, false);
+        VPlan &BestPlan = LVP.getBestPlan();
+        assert(size(BestPlan.vectorFactors()) == 1 &&
+               "Plan should have a single VF");
+        ElementCount Width = *BestPlan.vectorFactors().begin();
+        LLVM_DEBUG(dbgs() << "VF picked by VPlan cost model: " << Width
+                          << "\n");
+        assert(VF.Width == Width &&
+               "VPlan cost model and legacy cost model disagreed");
+        LVP.executePlan(Width, IC, BestPlan, LB, DT, false);
         ++LoopsVectorized;
 
         // Add metadata to disable runtime unrolling a scalar loop when there
