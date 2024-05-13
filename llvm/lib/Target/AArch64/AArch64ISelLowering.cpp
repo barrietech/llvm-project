@@ -17947,7 +17947,7 @@ static SDValue performFpToIntCombine(SDNode *N, SelectionDAG &DAG,
 static SDValue performFDivCombine(SDNode *N, SelectionDAG &DAG,
                                   TargetLowering::DAGCombinerInfo &DCI,
                                   const AArch64Subtarget *Subtarget) {
-  if (!Subtarget->hasNEON())
+  if (!Subtarget->isNeonAvailable())
     return SDValue();
 
   SDValue Op = N->getOperand(0);
