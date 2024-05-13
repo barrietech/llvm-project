@@ -3996,5 +3996,11 @@ Instruction *InstCombinerImpl::visitSelectInst(SelectInst &SI) {
     }
   }
 
+  // select Cond, !X, X -> xor Cond, X
+  if (CondVal->getType() == SI.getType() && impliesPoison(FalseVal, TrueVal) &&
+      isImpliedCondition(FalseVal, TrueVal, DL, /*LHSIsTrue=*/true) == false &&
+      isImpliedCondition(FalseVal, TrueVal, DL, /*LHSIsTrue=*/false) == true)
+    return BinaryOperator::CreateXor(CondVal, FalseVal);
+
   return nullptr;
 }
