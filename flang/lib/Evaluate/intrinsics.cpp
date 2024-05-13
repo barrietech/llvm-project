@@ -454,6 +454,10 @@ static const IntrinsicInterface genericIntrinsicFunction[]{
     {"erf", {{"x", SameReal}}, SameReal},
     {"erfc", {{"x", SameReal}}, SameReal},
     {"erfc_scaled", {{"x", SameReal}}, SameReal},
+    {"etime",
+        {{"values", TypePattern{RealType, KindCode::exactKind, 4}, Rank::vector,
+            Optionality::required, common::Intent::Out}},
+        TypePattern{RealType, KindCode::exactKind, 4}},
     {"exp", {{"x", SameFloating}}, SameFloating},
     {"exp", {{"x", SameFloating}}, SameFloating},
     {"exponent", {{"x", AnyReal}}, DefaultInt},
@@ -975,6 +979,12 @@ static const std::pair<const char *, const char *> genericAlias[]{
     {"__builtin_ieee_selected_real_kind", "selected_real_kind"},
 };
 
+// Collection for some intrinsics with function and subroutine form,
+// in order to pass 
+static const std::string dualIntrinsic[]{
+  {"etime"}
+};
+
 // The following table contains the intrinsic functions listed in
 // Tables 16.2 and 16.3 in Fortran 2018.  The "unrestricted" functions
 // in Table 16.2 can be used as actual arguments, PROCEDURE() interfaces,
@@ -1341,6 +1351,12 @@ static const IntrinsicInterface intrinsicSubroutine[]{
                 common::Intent::Out},
             {"values", AnyInt, Rank::vector, Optionality::optional,
                 common::Intent::Out}},
+        {}, Rank::elemental, IntrinsicClass::impureSubroutine},
+    {"etime",
+        {{"values", TypePattern{RealType, KindCode::exactKind, 4}, Rank::vector,
+             Optionality::required, common::Intent::Out},
+            {"time", TypePattern{RealType, KindCode::exactKind, 4},
+                Rank::scalar, Optionality::required, common::Intent::Out}},
         {}, Rank::elemental, IntrinsicClass::impureSubroutine},
     {"execute_command_line",
         {{"command", DefaultChar, Rank::scalar},
@@ -2484,6 +2500,7 @@ public:
   bool IsIntrinsic(const std::string &) const;
   bool IsIntrinsicFunction(const std::string &) const;
   bool IsIntrinsicSubroutine(const std::string &) const;
+  bool IsDualIntrinsic(const std::string &) const;
 
   IntrinsicClass GetIntrinsicClass(const std::string &) const;
   std::string GetGenericIntrinsicName(const std::string &) const;
@@ -2544,6 +2561,13 @@ bool IntrinsicProcTable::Implementation::IsIntrinsicSubroutine(
 bool IntrinsicProcTable::Implementation::IsIntrinsic(
     const std::string &name) const {
   return IsIntrinsicFunction(name) || IsIntrinsicSubroutine(name);
+}
+bool IntrinsicProcTable::Implementation::IsDualIntrinsic(
+    const std::string &name) const {
+  return std::find_if(std::begin(dualIntrinsic), std::end(dualIntrinsic),
+             [&name](const std::string &dualName) {
+               return dualName == name;
+             }) != std::end(dualIntrinsic);
 }
 
 IntrinsicClass IntrinsicProcTable::Implementation::GetIntrinsicClass(
@@ -3083,7 +3107,7 @@ std::optional<SpecificCall> IntrinsicProcTable::Implementation::Probe(
         return specificCall;
       }
     }
-    if (IsIntrinsicFunction(call.name)) {
+    if (IsIntrinsicFunction(call.name) && !IsDualIntrinsic(call.name)) {
       context.messages().Say(
           "Cannot use intrinsic function '%s' as a subroutine"_err_en_US,
           call.name);
@@ -3218,7 +3242,7 @@ std::optional<SpecificCall> IntrinsicProcTable::Implementation::Probe(
   }
 
   if (specificBuffer.empty() && genericBuffer.empty() &&
-      IsIntrinsicSubroutine(call.name)) {
+      IsIntrinsicSubroutine(call.name) && IsDualIntrinsic(call.name)) {
     context.messages().Say(
         "Cannot use intrinsic subroutine '%s' as a function"_err_en_US,
         call.name);
