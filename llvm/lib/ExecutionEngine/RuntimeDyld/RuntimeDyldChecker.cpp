@@ -354,6 +354,26 @@ private:
           EvalResult(("Cannot decode unknown symbol '" + Symbol + "'").str()),
           "");
 
+    // if there is an offset number expr
+    int64_t SymbolOffset = 0;
+    BinOpToken BinOp;
+    std::tie(BinOp, RemainingExpr) = parseBinOpToken(RemainingExpr);
+    switch (BinOp) {
+    case BinOpToken::Add: {
+      EvalResult Number;
+      std::tie(Number, RemainingExpr) = evalNumberExpr(RemainingExpr);
+      SymbolOffset = Number.getValue();
+      break;
+    }
+    case BinOpToken::Invalid:
+      break;
+    default:
+      return std::make_pair(
+          unexpectedToken(RemainingExpr, RemainingExpr,
+                          "expected '+' for offset or ')' if no offset"),
+          "");
+    }
+
     if (!RemainingExpr.starts_with(")"))
       return std::make_pair(
           unexpectedToken(RemainingExpr, RemainingExpr, "expected ')'"), "");
@@ -361,15 +381,20 @@ private:
 
     MCInst Inst;
     uint64_t InstSize;
-    if (!decodeInst(Symbol, Inst, InstSize, 0))
+    if (!decodeInst(Symbol, Inst, InstSize, SymbolOffset))
       return std::make_pair(
           EvalResult(("Couldn't decode instruction at '" + Symbol + "'").str()),
           "");
 
-    uint64_t SymbolAddr = PCtx.IsInsideLoad
-                              ? Checker.getSymbolLocalAddr(Symbol)
-                              : Checker.getSymbolRemoteAddr(Symbol);
-    uint64_t NextPC = SymbolAddr + InstSize;
+    uint64_t SymbolAddr =
+        PCtx.IsInsideLoad ? Checker.getSymbolLocalAddr(Symbol)
+                          : Checker.getSymbolRemoteAddr(Symbol) + SymbolOffset;
+
+    // ARM mode adds an offset of 4 bytes to PC
+    auto TT = Checker.getTripleForSymbol(Checker.getTargetFlag(Symbol));
+    uint64_t PCOffset = TT.getArch() == Triple::ArchType::arm ? 4 : 0;
+
+    uint64_t NextPC = SymbolAddr + InstSize + PCOffset;
 
     return std::make_pair(EvalResult(NextPC), RemainingExpr);
   }
