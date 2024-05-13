@@ -1591,6 +1591,20 @@ def insert_vector_elt_oob : GICombineRule<
          [{ return Helper.matchInsertVectorElementOOB(*${root}, ${matchinfo}); }]),
   (apply [{ Helper.applyBuildFn(*${root}, ${matchinfo}); }])>;
 
+def extract_vector_element_icmp : GICombineRule<
+  (defs root:$root, build_fn_matchinfo:$matchinfo),
+   (match (G_ICMP $src, $pred, $lhs, $rhs),
+          (G_EXTRACT_VECTOR_ELT $root, $src, $idx),
+   [{ return Helper.matchExtractVectorElementWithICmp(${root}, ${matchinfo}); }]),
+   (apply [{ Helper.applyBuildFnMO(${root}, ${matchinfo}); }])>;
+
+def extract_vector_element_fcmp : GICombineRule<
+  (defs root:$root, build_fn_matchinfo:$matchinfo),
+  (match (G_FCMP $fsrc, $fpred, $flhs, $frhs),
+         (G_EXTRACT_VECTOR_ELT $root, $fsrc, $fidx),
+  [{ return Helper.matchExtractVectorElementWithFCmp(${root}, ${matchinfo}); }]),
+  (apply [{ Helper.applyBuildFnMO(${root}, ${matchinfo}); }])>;
+
 // match_extract_of_element and insert_vector_elt_oob must be the first!
 def vector_ops_combines: GICombineGroup<[
 match_extract_of_element_undef_vector,
@@ -1624,6 +1638,8 @@ extract_vector_element_build_vector_trunc7,
 extract_vector_element_build_vector_trunc8,
 extract_vector_element_freeze,
 extract_vector_element_shuffle_vector,
+extract_vector_element_icmp,
+extract_vector_element_fcmp,
 insert_vector_element_extract_vector_element
 ]>;
 
