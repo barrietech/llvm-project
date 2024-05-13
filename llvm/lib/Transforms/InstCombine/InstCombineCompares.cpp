@@ -8044,6 +8044,44 @@ Instruction *InstCombinerImpl::visitFCmpInst(FCmpInst &I) {
       if (Instruction *NV = FoldOpIntoSelect(I, cast<SelectInst>(LHSI)))
         return NV;
       break;
+    case Instruction::FSub:
+      switch (Pred) {
+      default:
+        break;
+      case FCmpInst::FCMP_UGT:
+      case FCmpInst::FCMP_ULT:
+      case FCmpInst::FCMP_UNE:
+      case FCmpInst::FCMP_OEQ:
+      case FCmpInst::FCMP_OGE:
+      case FCmpInst::FCMP_OLE:
+        // Skip optimization: fsub x, y guaranteed isInf(x, y).
+        if (!LHSI->hasNoNaNs() && !LHSI->hasNoInfs() &&
+            !isKnownNeverInfinity(LHSI->getOperand(1), /*Depth=*/0,
+                                  getSimplifyQuery().getWithInstruction(&I)) &&
+            !isKnownNeverInfinity(LHSI->getOperand(0), /*Depth=*/0,
+                                  getSimplifyQuery().getWithInstruction(&I)))
+          break;
+
+        [[fallthrough]];
+      case FCmpInst::FCMP_OGT:
+      case FCmpInst::FCMP_OLT:
+      case FCmpInst::FCMP_ONE:
+      case FCmpInst::FCMP_UEQ:
+      case FCmpInst::FCMP_UGE:
+      case FCmpInst::FCMP_ULE:
+        // fcmp pred (x - y), 0 --> fcmp pred x, y
+        if (match(RHSC, m_AnyZeroFP()) &&
+            match(LHSI, m_FSub(m_Value(X), m_Value(Y))) &&
+            I.getFunction()->getDenormalMode(
+                LHSI->getType()->getScalarType()->getFltSemantics()) ==
+                DenormalMode::getIEEE()) {
+          replaceOperand(I, 0, X);
+          replaceOperand(I, 1, Y);
+          return &I;
+        }
+        break;
+      }
+      break;
     case Instruction::PHI:
       if (Instruction *NV = foldOpIntoPhi(I, cast<PHINode>(LHSI)))
         return NV;
